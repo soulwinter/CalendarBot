@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var selectedDate = Date()
     @State private var showingNewEventSheet = false
     @State private var selectedCalendar: EKCalendar?
+    @State private var showingSettingsSheet = false
     
     // 新事件的状态
     @State private var newEventTitle = ""
@@ -36,23 +37,25 @@ struct ContentView: View {
     @State private var showingErrorAlert = false
     @State private var showingSuccessAlert = false
     
+    // State properties
+    @State private var selectedCalendars: Set<EKCalendar> = []
+    
     private func prepareAndShowExport() {
-        print("开始准备导出...")
-        let events = calendarManager.loadEventsForRange(from: exportStartDate, to: exportEndDate)
+        print("Starting export preparation...")
+        let events = calendarManager.loadEventsForRange(from: exportStartDate, to: exportEndDate, calendars: Array(selectedCalendars))
         let eventsText = calendarManager.formatEventsToText(events: events)
-        print("事件文本准备完成: \n\(eventsText)")
+        print("Events text prepared: \n\(eventsText)")
         
-        print("开始加载提醒事项...")
+        print("Loading reminders...")
         calendarManager.loadRemindersForRange(from: exportStartDate, to: exportEndDate) { reminders in
             let remindersText = self.calendarManager.formatRemindersToText(reminders: reminders)
-            print("提醒事项文本准备完成: \n\(remindersText)")
+            print("Reminders text prepared: \n\(remindersText)")
             
-            // 开始处理 Dify 请求
             Task {
-                print("开始 Dify API 请求流程...")
+                print("Starting Dify API request...")
                 isLoading = true
                 do {
-                    print("发送请求到 Dify API...")
+                    print("Sending request to Dify API...")
                     let response = try await DifyAPI.shared.submitEvents(
                         existedEvents: eventsText,
                         plans: remindersText
@@ -60,21 +63,21 @@ struct ContentView: View {
                     
                     await MainActor.run {
                         isLoading = false
-                        print("收到 Dify API 响应: status=\(response.status)")
+                        print("Received Dify API response: status=\(response.status)")
                         
                         if response.status == 0 {
-                            errorMessage = "System exception, please try again later"
-                            print("❌ API 返回错误: \(response.message ?? "无错误信息")")
+                            errorMessage = response.message ?? "Unknown error"
+                            print("❌ API returned error: \(response.message ?? "No error message")")
                             showingErrorAlert = true
                         } else if let events = response.events {
-                            print("✅ API 返回事件数量: \(events.count)")
+                            print("✅ API returned \(events.count) events")
                             if calendarManager.createDifyEvents(events) {
-                                print("✅ 成功创建所有事件")
+                                print("✅ Successfully created all events")
                                 calendarManager.loadEvents(for: selectedDate)
                                 showingSuccessAlert = true
                             } else {
-                                errorMessage = "创建事件时发生错误"
-                                print("❌ 创建事件失败")
+                                errorMessage = "Failed to create events"
+                                print("❌ Failed to create events")
                                 showingErrorAlert = true
                             }
                         }
@@ -82,8 +85,8 @@ struct ContentView: View {
                 } catch {
                     await MainActor.run {
                         isLoading = false
-                        errorMessage = "System exception, please try again later"
-                        print("❌ API 请求异常: \(error)")
+                        errorMessage = error.localizedDescription
+                        print("❌ API request failed: \(error)")
                         showingErrorAlert = true
                     }
                 }
@@ -98,7 +101,7 @@ struct ContentView: View {
                     DatePicker("Select Date", selection: $selectedDate, displayedComponents: [.date])
                         .datePickerStyle(.graphical)
                         .onChange(of: selectedDate) { _ in
-                            calendarManager.loadEvents(for: selectedDate)
+                            calendarManager.loadEvents(for: selectedDate, calendars: Array(selectedCalendars))
                         }
                     
                     List {
@@ -145,19 +148,59 @@ struct ContentView: View {
             }
             .navigationTitle("Calendar")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: {
+                        showingSettingsSheet = true
+                    }) {
+                        Image(systemName: "gear")
+                    }
+                }
+                
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     Button(action: {
                         showingExportOptions = true
                     }) {
-                        Image(systemName: "square.and.arrow.up")
+                        Image(systemName: "calendar.badge.plus")
                     }
-                    .disabled(isLoading)
+                    .disabled(isLoading || selectedCalendars.isEmpty)
                     
                     Button(action: {
                         showingNewEventSheet = true
                     }) {
                         Image(systemName: "plus")
                     }
+                }
+            }
+            .sheet(isPresented: $showingSettingsSheet) {
+                NavigationView {
+                    List {
+                        Section("Calendar Selection") {
+                            ForEach(calendarManager.calendars, id: \.calendarIdentifier) { calendar in
+                                HStack {
+                                    Circle()
+                                        .fill(calendarManager.calendarColor(for: calendar))
+                                        .frame(width: 12, height: 12)
+                                    Text(calendar.title ?? "Default Calendar")
+                                    Spacer()
+                                    Toggle("", isOn: Binding(
+                                        get: { selectedCalendars.contains(calendar) },
+                                        set: { isSelected in
+                                            if isSelected {
+                                                selectedCalendars.insert(calendar)
+                                            } else {
+                                                selectedCalendars.remove(calendar)
+                                            }
+                                            calendarManager.loadEvents(for: selectedDate, calendars: Array(selectedCalendars))
+                                        }
+                                    ))
+                                }
+                            }
+                        }
+                    }
+                    .navigationTitle("Settings")
+                    .navigationBarItems(trailing: Button("Done") {
+                        showingSettingsSheet = false
+                    })
                 }
             }
             .confirmationDialog("Select Export Range", isPresented: $showingExportOptions, titleVisibility: .visible) {

@@ -68,20 +68,20 @@ class CalendarManager: ObservableObject {
         }
     }
     
-    func loadEvents(for date: Date) {
+    func loadEvents(for date: Date, calendars: [EKCalendar]? = nil) {
         let startDate = Calendar.current.startOfDay(for: date)
         var components = DateComponents()
         components.day = 1
         let endDate = Calendar.current.date(byAdding: components, to: startDate)!
         
-        let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: calendars)
+        let calendarsToUse = calendars ?? self.calendars
+        let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: calendarsToUse)
         let events = eventStore.events(matching: predicate)
         
         DispatchQueue.main.async {
             self.events = events.sorted { $0.startDate < $1.startDate }
         }
         
-        // 同时加载提醒事项
         loadReminders(for: date)
     }
     
@@ -139,8 +139,9 @@ class CalendarManager: ObservableObject {
         Color(UIColor(cgColor: calendar.cgColor))
     }
     
-    func loadEventsForRange(from startDate: Date, to endDate: Date) -> [EKEvent] {
-        let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: calendars)
+    func loadEventsForRange(from startDate: Date, to endDate: Date, calendars: [EKCalendar]? = nil) -> [EKEvent] {
+        let calendarsToUse = calendars ?? self.calendars
+        let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: calendarsToUse)
         let events = eventStore.events(matching: predicate)
         return events.sorted { $0.startDate < $1.startDate }
     }
